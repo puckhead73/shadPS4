@@ -3,6 +3,7 @@
 
 #include "common/arch.h"
 #include "common/assert.h"
+#include "common/crash_handler.h"
 #include "common/decoder.h"
 #include "common/signal_context.h"
 #include "core/libraries/kernel/threads/exception.h"
@@ -65,6 +66,23 @@ static LONG WINAPI SignalHandler(EXCEPTION_POINTERS* pExp) noexcept {
     }
 
     LOG_CRITICAL(Debug, "Unhandled Exception code {:#x} at {}", code, address);
+
+    // Genuine native faults (not first-chance C++ exceptions, which use code 0xE06D7363) are
+    // fatal: capture a minidump + symbolized backtrace and flush logs before the process dies.
+    switch (code) {
+    case EXCEPTION_ACCESS_VIOLATION:
+    case EXCEPTION_ILLEGAL_INSTRUCTION:
+    case EXCEPTION_PRIV_INSTRUCTION:
+    case EXCEPTION_STACK_OVERFLOW:
+    case EXCEPTION_IN_PAGE_ERROR:
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:
+    case EXCEPTION_DATATYPE_MISALIGNMENT:
+        Common::WriteCrashReport(pExp, "veh");
+        break;
+    default:
+        break;
+    }
+
     return EXCEPTION_CONTINUE_SEARCH;
 }
 

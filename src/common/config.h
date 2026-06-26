@@ -156,6 +156,8 @@ ReadbackSpeed readbackSpeed();
 void setReadbackSpeed(ReadbackSpeed mode);
 bool setReadbackLinearImages(bool enable);
 bool getReadbackLinearImages();
+bool getSyncStorageImages();
+bool getSyncRenderTargetAliases();
 bool setScreenTipDisable(bool enable);
 bool getScreenTipDisable();
 bool directMemoryAccess();

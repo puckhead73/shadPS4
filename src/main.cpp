@@ -20,6 +20,7 @@
 
 #include <fmt/core.h>
 #include "common/config.h"
+#include "common/crash_handler.h"
 #include "common/logging/backend.h"
 #include "common/memory_patcher.h"
 #include "common/path_util.h"
@@ -51,6 +52,7 @@ int main(int argc, char* argv[]) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
 #endif
+    Common::InstallCrashHandler();
 
     IPC::Instance().Init();
     // Init emulator state

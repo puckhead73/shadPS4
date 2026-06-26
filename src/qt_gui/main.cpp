@@ -6,6 +6,7 @@
 #include <core/emulator_state.h>
 
 #include "common/config.h"
+#include "common/crash_handler.h"
 #include "common/logging/backend.h"
 #include "common/memory_patcher.h"
 #include "core/debugger.h"
@@ -42,6 +43,7 @@ void StopProgram() {
 }
 
 int main(int argc, char* argv[]) {
+    Common::InstallCrashHandler();
 #ifdef _WIN32
     SetConsoleCP(CP_UTF8);
     SetConsoleOutputCP(CP_UTF8);

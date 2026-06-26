@@ -134,7 +134,10 @@ private:
     VideoCore::TextureCache texture_cache;
     StorageImageSync storage_sync_;
     RenderTargetSync rt_sync_;
-    VideoCore::ImageId pending_storage_image_id_{};
+    // All storage images written by the current compute dispatch. A multi-output compute shader
+    // (e.g. NHL19 hi-def face skinning) writes several storage images; syncing only the last one
+    // back to guest memory leaves the rest stale, so the dependent mesh explodes from a point.
+    boost::container::small_vector<VideoCore::ImageId, 8> pending_storage_image_ids_;
     AmdGpu::Liverpool* liverpool;
     Core::MemoryManager* memory;
     boost::icl::interval_set<VAddr> mapped_ranges;

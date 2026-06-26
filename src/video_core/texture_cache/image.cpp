@@ -555,8 +555,19 @@ void Image::CopyImage(Image& src_image) {
     const bool is_same_type = !is_2d_to_3d && !is_3d_to_2d;
 
     for (u32 mip = 0; mip < num_mips; ++mip) {
-        const u32 mip_w = std::max(base_width >> mip, 1u);
-        const u32 mip_h = std::max(base_height >> mip, 1u);
+        // A copy region must fit within BOTH images at this mip. Deriving the extent purely from
+        // the source (as before) overruns the destination whenever src > dst — which submits an
+        // out-of-bounds vkCmdCopyImage and crashes natively inside the driver. Clamp each spatial
+        // dimension to the smaller of the two images.
+        const u32 src_mip_w = std::max(base_width >> mip, 1u);
+        const u32 src_mip_h = std::max(base_height >> mip, 1u);
+        const u32 dst_mip_w = std::max(info.size.width >> mip, 1u);
+        const u32 dst_mip_h = std::max(info.size.height >> mip, 1u);
+        const u32 copy_w = std::min(src_mip_w, dst_mip_w);
+        const u32 copy_h = std::min(src_mip_h, dst_mip_h);
+
+        const u32 src_mip_d = std::max(src_info.size.depth >> mip, 1u);
+        const u32 dst_mip_d = std::max(info.size.depth >> mip, 1u);
         const u32 mip_d = std::max(base_depth >> mip, 1u);
 
         auto [src_layers, dst_layers] = SanitizeCopyLayers(src_info, info, mip_d);
@@ -577,24 +588,26 @@ void Image::CopyImage(Image& src_image) {
                 // 3D images must use layerCount=1
                 region.srcSubresource.layerCount = 1;
                 region.dstSubresource.layerCount = 1;
-                region.extent = vk::Extent3D(mip_w, mip_h, mip_d);
+                region.extent = vk::Extent3D(copy_w, copy_h, std::min(src_mip_d, dst_mip_d));
             } else {
                 // Array images
                 const u32 copy_layers = std::min(src_layers, dst_layers);
                 region.srcSubresource.layerCount = copy_layers;
                 region.dstSubresource.layerCount = copy_layers;
-                region.extent = vk::Extent3D(mip_w, mip_h, 1);
+                region.extent = vk::Extent3D(copy_w, copy_h, 1);
             }
         } else if (is_2d_to_3d) {
-            // 2D array -> 3D volume
-            region.srcSubresource.layerCount = src_layers;
+            // 2D array -> 3D volume: copy min(src layers, dst depth) slices.
+            const u32 copy_depth = std::min(src_layers, dst_mip_d);
+            region.srcSubresource.layerCount = copy_depth;
             region.dstSubresource.layerCount = 1;
-            region.extent = vk::Extent3D(mip_w, mip_h, src_layers);
+            region.extent = vk::Extent3D(copy_w, copy_h, copy_depth);
         } else if (is_3d_to_2d) {
-            // 3D volume -> 2D array
+            // 3D volume -> 2D array: copy min(dst layers, src depth) slices.
+            const u32 copy_depth = std::min(dst_layers, src_mip_d);
             region.srcSubresource.layerCount = 1;
-            region.dstSubresource.layerCount = dst_layers;
-            region.extent = vk::Extent3D(mip_w, mip_h, dst_layers);
+            region.dstSubresource.layerCount = copy_depth;
+            region.extent = vk::Extent3D(copy_w, copy_h, copy_depth);
         }
 
         regions.push_back(region);

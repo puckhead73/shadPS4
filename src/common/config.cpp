@@ -247,6 +247,10 @@ static ConfigEntry<bool> isNullGpu(false);
 static ConfigEntry<bool> shouldCopyGPUBuffers(false);
 static ConfigEntry<ReadbackSpeed> readbackSpeedMode(ReadbackSpeed::Disable);
 static ConfigEntry<bool> readbackLinearImagesEnabled(false);
+// Debug bisection toggles for the fork's custom unified-memory aliasing systems.
+// Default true = current behavior; set false in config.toml to isolate graphical glitches.
+static ConfigEntry<bool> syncStorageImagesEnabled(true);
+static ConfigEntry<bool> syncRenderTargetAliasesEnabled(true);
 static ConfigEntry<bool> directMemoryAccessEnabled(false);
 static ConfigEntry<bool> shouldDumpShaders(false);
 static ConfigEntry<bool> shouldPatchShaders(false);
@@ -1001,6 +1005,14 @@ bool setReadbackLinearImages(bool enable) {
 
 bool getReadbackLinearImages() {
     return readbackLinearImagesEnabled.get();
+}
+
+bool getSyncStorageImages() {
+    return syncStorageImagesEnabled.get();
+}
+
+bool getSyncRenderTargetAliases() {
+    return syncRenderTargetAliasesEnabled.get();
 }
 
 bool setScreenTipDisable(bool enable) {
@@ -1804,6 +1816,8 @@ void load(const std::filesystem::path& path, bool is_game_specific) {
         isNullGpu.setFromToml(gpu, "nullGpu", is_game_specific);
         shouldCopyGPUBuffers.setFromToml(gpu, "copyGPUBuffers", is_game_specific);
         readbackLinearImagesEnabled.setFromToml(gpu, "readbackLinearImages", is_game_specific);
+        syncStorageImagesEnabled.setFromToml(gpu, "syncStorageImages", is_game_specific);
+        syncRenderTargetAliasesEnabled.setFromToml(gpu, "syncRenderTargetAliases", is_game_specific);
         directMemoryAccessEnabled.setFromToml(gpu, "directMemoryAccess", is_game_specific);
         isFullscreen.setFromToml(gpu, "Fullscreen", is_game_specific);
         fullscreenMode.setFromToml(gpu, "FullscreenMode", is_game_specific);
@@ -2230,6 +2244,11 @@ void save(const std::filesystem::path& path, bool is_game_specific) {
         data["GPU"]["readbackLinearImages"] =
             readbackLinearImagesEnabled.game_specific_value.value_or(
                 readbackLinearImagesEnabled.base_value);
+        data["GPU"]["syncStorageImages"] = syncStorageImagesEnabled.game_specific_value.value_or(
+            syncStorageImagesEnabled.base_value);
+        data["GPU"]["syncRenderTargetAliases"] =
+            syncRenderTargetAliasesEnabled.game_specific_value.value_or(
+                syncRenderTargetAliasesEnabled.base_value);
         data["GPU"]["directMemoryAccess"] = directMemoryAccessEnabled.game_specific_value.value_or(
             directMemoryAccessEnabled.base_value);
         data["GPU"]["dumpShaders"] =
@@ -2264,6 +2283,8 @@ void save(const std::filesystem::path& path, bool is_game_specific) {
         data["GPU"]["copyGPUBuffers"] = shouldCopyGPUBuffers.base_value;
         data["GPU"]["readbackSpeedMode"] = static_cast<int>(readbackSpeedMode.base_value);
         data["GPU"]["readbackLinearImages"] = readbackLinearImagesEnabled.base_value;
+        data["GPU"]["syncStorageImages"] = syncStorageImagesEnabled.base_value;
+        data["GPU"]["syncRenderTargetAliases"] = syncRenderTargetAliasesEnabled.base_value;
         data["GPU"]["directMemoryAccess"] = directMemoryAccessEnabled.base_value;
         data["GPU"]["dumpShaders"] = shouldDumpShaders.base_value;
         data["GPU"]["patchShaders"] = shouldPatchShaders.base_value;

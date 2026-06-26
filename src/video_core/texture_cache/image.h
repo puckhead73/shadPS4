@@ -106,6 +106,13 @@ struct Image {
         return backing->image.image;
     }
 
+    /// True if this image currently has a live backing with a valid VkImage handle. Slots whose
+    /// backing was freed/never-created return false; callers must check this before handing
+    /// GetImage() to the driver, or it will dereference a null/stale handle.
+    bool HasBackingImage() const {
+        return backing != nullptr && static_cast<bool>(backing->image.image);
+    }
+
     bool IsTracked() {
         return track_addr != 0 && track_addr_end != 0;
     }

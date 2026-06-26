@@ -827,6 +827,8 @@ set(COMMON src/common/logging/backend.cpp
            src/common/scm_rev.h
            src/common/key_manager.cpp
            src/common/key_manager.h
+           src/common/crash_handler.cpp
+           src/common/crash_handler.h
 )
 
 if (ENABLE_DISCORD_RPC)
@@ -1391,7 +1393,7 @@ if (ENABLE_QT_GUI)
 endif()
 
 if (WIN32)
-    target_link_libraries(shadps4 PRIVATE mincore wepoll wbemuuid)
+    target_link_libraries(shadps4 PRIVATE mincore wepoll wbemuuid dbghelp)
 
     if (MSVC)
         # MSVC likes putting opinions on what people can use, disable:

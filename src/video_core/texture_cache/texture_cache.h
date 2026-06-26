@@ -166,6 +166,13 @@ public:
         return image;
     }
 
+    /// True if `id` refers to a currently-live image slot. Ids cached outside the texture cache
+    /// (e.g. recorded render targets) can be freed during cache churn; callers must check this
+    /// before GetImage(), as dereferencing a freed/reused slot reads destructed memory.
+    [[nodiscard]] bool IsImageValid(ImageId id) const {
+        return static_cast<bool>(id) && slot_images.is_allocated(id);
+    }
+
     /// Retrieves the image view with the specified id.
     [[nodiscard]] ImageView& GetImageView(ImageId id) {
         return slot_image_views[id];

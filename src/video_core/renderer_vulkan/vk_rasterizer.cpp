@@ -1,6 +1,7 @@
 ﻿// SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include "common/config.h"
 #include "common/debug.h"
 #include "core/memory.h"
@@ -359,8 +360,10 @@ void Rasterizer::DispatchDirect() {
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->Handle());
     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
 
-    if (pending_storage_image_id_) {
-        storage_sync_.Sync(pending_storage_image_id_);
+    if (Config::getSyncStorageImages()) {
+        for (const auto storage_image_id : pending_storage_image_ids_) {
+            storage_sync_.Sync(storage_image_id);
+        }
     }
     ResetBindings();
 }
@@ -395,8 +398,10 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size, bool on_g
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->Handle());
     cmdbuf.dispatchIndirect(buffer->Handle(), base);
 
-    if (pending_storage_image_id_) {
-        storage_sync_.Sync(pending_storage_image_id_);
+    if (Config::getSyncStorageImages()) {
+        for (const auto storage_image_id : pending_storage_image_ids_) {
+            storage_sync_.Sync(storage_image_id);
+        }
     }
     ResetBindings();
 }
@@ -442,7 +447,7 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
         return false;
     }
 
-    pending_storage_image_id_ = {};
+    pending_storage_image_ids_.clear();
 
     set_write_index = 0;
     set_writes.clear();
@@ -767,8 +772,10 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
             }
 
             image_id = texture_cache.FindImage(desc);
-            rt_sync_.CopyFromLastRt(desc.info.guest_address, image_id, desc.info.size.width,
-                                    desc.info.size.height);
+            if (Config::getSyncRenderTargetAliases()) {
+                rt_sync_.CopyFromLastRt(desc.info.guest_address, image_id, desc.info.size.width,
+                                        desc.info.size.height);
+            }
             auto* image = &texture_cache.GetImage(image_id);
             if (auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
                 // If this image has an associated depth image, it's a stencil attachment.
@@ -842,8 +849,10 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
             image.usage.storage |= is_storage;
             image.usage.texture |= !is_storage;
 
-            if (is_storage) {
-                pending_storage_image_id_ = image_id;
+            if (is_storage && std::find(pending_storage_image_ids_.begin(),
+                                        pending_storage_image_ids_.end(),
+                                        image_id) == pending_storage_image_ids_.end()) {
+                pending_storage_image_ids_.push_back(image_id);
             }
 
             image_infos.emplace_back(VK_NULL_HANDLE, *image_view.image_view,
@@ -913,7 +922,9 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         texture_cache.UpdateImage(image_id);
         image->SetBackingSamples(key.color_samples[cb]);
         const auto& image_view = texture_cache.FindRenderTarget(image_id, desc);
-        rt_sync_.RecordRtWrite(desc.info.guest_address, image_id);
+        if (Config::getSyncRenderTargetAliases()) {
+            rt_sync_.RecordRtWrite(desc.info.guest_address, image_id);
+        }
         // 1×1 render target: force download to guest so CPU can read the result
         if (desc.info.size.width == 1 && desc.info.size.height == 1) {
             rt_sync_.Schedule1x1Readback(image_id);

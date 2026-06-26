@@ -20,7 +20,10 @@ namespace VideoCore {
 
 static constexpr size_t DataShareBufferSize = 64_KB;
 static constexpr size_t StagingBufferSize = 512_MB;
-static constexpr size_t DownloadBufferSize = 32_MB;
+// StorageImageSync downloads whole storage images (NHL19 hits a 128 MB one); a 32 MB ring made
+// Map() fail and skipped the writeback → mesh/texture corruption. Sized to fit the largest seen
+// image plus ring headroom.
+static constexpr size_t DownloadBufferSize = 256_MB;
 static constexpr size_t UboStreamBufferSize = 64_MB;
 static constexpr size_t DeviceBufferSize = 128_MB;
 

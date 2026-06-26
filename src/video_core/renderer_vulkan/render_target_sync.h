@@ -82,7 +82,14 @@ private:
     Scheduler& scheduler;
     VideoCore::TextureCache& texture_cache;
 
-    tsl::robin_map<VAddr, VideoCore::ImageId> pending_rt_writes_;
+    // An ImageId alone is not enough to dereference later: the texture cache can free (and reuse)
+    // the slot during churn. Pair it with the image's unique id so a stale/reused entry is
+    // detectable at use time.
+    struct PendingRt {
+        VideoCore::ImageId id;
+        u64 uid;
+    };
+    tsl::robin_map<VAddr, PendingRt> pending_rt_writes_;
     std::map<VAddr, std::set<VideoCore::ImageId>> pending_rt_copied_;
 };
 
