@@ -12,8 +12,8 @@ using Sirit::Id;
 constexpr u32 SPIRV_VERSION_1_5 = 0x00010500;
 
 struct QuadRectListEmitter : public Sirit::Module {
-    explicit QuadRectListEmitter(const FragmentRuntimeInfo& fs_info_)
-        : Sirit::Module{SPIRV_VERSION_1_5}, fs_info{fs_info_} {
+    explicit QuadRectListEmitter(const FragmentRuntimeInfo& fs_info_, u32 vs_output_mask_)
+        : Sirit::Module{SPIRV_VERSION_1_5}, fs_info{fs_info_}, vs_output_mask{vs_output_mask_} {
         void_id = TypeVoid();
         bool_id = TypeBool();
         float_id = TypeFloat(32);
@@ -26,6 +26,8 @@ struct QuadRectListEmitter : public Sirit::Module {
 
         float_one = Constant(float_id, 1.0f);
         float_min_one = Constant(float_id, -1.0f);
+        const Id float_zero{Constant(float_id, 0.0f)};
+        vec4_zero = ConstantComposite(vec4_id, float_zero, float_zero, float_zero, float_zero);
         int_zero = Constant(int_id, 0);
 
         const Id float_arr{TypeArray(float_id, Constant(uint_id, 1U))};
@@ -116,7 +118,13 @@ struct QuadRectListEmitter : public Sirit::Module {
         OpStore(OpAccessChain(output_vec4, gl_out, invocation_id, Int(0)), position);
 
         // Set attributes
-        for (int i = 0; i < inputs.size(); i++) {
+        for (int i = 0; i < outputs.size(); i++) {
+            if (!input_valid[i]) {
+                // Location not provided by the VS: write a defined zero instead of reading
+                // an undeclared input.
+                OpStore(OpAccessChain(output_vec4, outputs[i], invocation_id), vec4_zero);
+                continue;
+            }
             // vec4 in_paramN3 = interpolate(bary_coord, in_paramN[0], in_paramN[1], in_paramN[2]);
             const Id v0{OpLoad(vec4_id, OpAccessChain(input_vec4, inputs[i], Int(0)))};
             const Id v1{OpLoad(vec4_id, OpAccessChain(input_vec4, inputs[i], Int(1)))};
@@ -161,7 +169,12 @@ struct QuadRectListEmitter : public Sirit::Module {
         const Id in_position{OpLoad(vec4_id, OpAccessChain(input_vec4, gl_in, index, Int(0)))};
         OpStore(OpAccessChain(output_vec4, gl_out, invocation_id, Int(0)), in_position);
 
-        for (int i = 0; i < inputs.size(); i++) {
+        for (int i = 0; i < outputs.size(); i++) {
+            if (!input_valid[i]) {
+                // Location not provided by the VS: write a defined zero.
+                OpStore(OpAccessChain(output_vec4, outputs[i], invocation_id), vec4_zero);
+                continue;
+            }
             // out_paramN[gl_InvocationID] = in_paramN[gl_InvocationID];
             const Id in_param{OpLoad(vec4_id, OpAccessChain(input_vec4, inputs[i], index))};
             OpStore(OpAccessChain(output_vec4, outputs[i], invocation_id), in_param);
@@ -276,19 +289,36 @@ private:
         const Id gl_per_vertex_array{TypeArray(gl_per_vertex_type, Constant(uint_id, 32U))};
         gl_in = AddInput(gl_per_vertex_array);
         const Id float_arr{TypeArray(vec4_id, Int(32))};
+        const bool is_tcs = model == spv::ExecutionModel::TessellationControl;
         inputs.reserve(fs_info.num_inputs);
+        input_valid.reserve(fs_info.num_inputs);
         for (int i = 0; i < fs_info.num_inputs; i++) {
             const auto& input = fs_info.inputs[i];
             if (input.IsDefault()) {
                 continue;
             }
-            inputs.emplace_back(AddInput(float_arr));
-            Decorate(inputs.back(), spv::Decoration::Location, input.param_index);
+            // The TCS reads from the game's VERTEX shader, which only declares outputs for
+            // the params it writes. Declaring a TCS input at a location the VS never outputs
+            // violates the SPIR-V interface (VUID-RuntimeSpirv-OpEntryPoint-08743) and reads
+            // undefined data. Skip those locations here; the body zero-fills the corresponding
+            // output so the downstream TES (and the TES->fragment interface) stays complete.
+            // The TES reads from the TCS (which outputs the full set), so it is never filtered.
+            const bool vs_provides = (vs_output_mask & (1u << input.param_index)) != 0;
+            if (is_tcs && !vs_provides) {
+                inputs.emplace_back(Id{});
+                input_valid.push_back(false);
+                continue;
+            }
+            const Id in_var{AddInput(float_arr)};
+            Decorate(in_var, spv::Decoration::Location, input.param_index);
+            inputs.emplace_back(in_var);
+            input_valid.push_back(true);
         }
     }
 
 private:
     FragmentRuntimeInfo fs_info;
+    u32 vs_output_mask;
     Id main;
     Id void_id;
     Id bool_id;
@@ -301,6 +331,7 @@ private:
     Id vec4_id;
     Id float_one;
     Id float_min_one;
+    Id vec4_zero;
     Id int_zero;
     Id gl_per_vertex_type;
     Id gl_in;
@@ -315,12 +346,14 @@ private:
         Id gl_invocation_id;
     };
     std::vector<Id> inputs;
+    std::vector<bool> input_valid;
     std::vector<Id> outputs;
     std::vector<Id> interfaces;
 };
 
-std::vector<u32> EmitAuxilaryTessShader(AuxShaderType type, const FragmentRuntimeInfo& fs_info) {
-    QuadRectListEmitter ctx{fs_info};
+std::vector<u32> EmitAuxilaryTessShader(AuxShaderType type, const FragmentRuntimeInfo& fs_info,
+                                        u32 vs_output_mask) {
+    QuadRectListEmitter ctx{fs_info, vs_output_mask};
     switch (type) {
     case AuxShaderType::RectListTCS:
         ctx.EmitRectListTCS();

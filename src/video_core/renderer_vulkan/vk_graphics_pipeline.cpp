@@ -183,6 +183,21 @@ GraphicsPipeline::GraphicsPipeline(
             .pName = "main",
         });
     }
+    // Bitmask of attribute Locations the vertex shader actually declares as Output. The
+    // auxiliary rect/quad-list TCS must only read locations the VS provides; otherwise it
+    // declares Inputs with no matching VS Output (VUID-RuntimeSpirv-OpEntryPoint-08743) and
+    // reads undefined attributes.
+    u32 vs_output_mask = 0;
+    if (const auto* vs = infos[u32(Shader::LogicalStage::Vertex)]) {
+        const bool clip_emu = profile.needs_clip_distance_emulation &&
+                              vs->stores.GetAny(Shader::IR::Attribute::ClipDistance);
+        for (u32 i = 0; i < Shader::IR::NumParams; i++) {
+            if (vs->stores.GetAny(Shader::IR::Attribute::Param0 + i)) {
+                vs_output_mask |= 1u << (i + (clip_emu ? 1u : 0u));
+            }
+        }
+    }
+
     stage = u32(Shader::LogicalStage::TessellationControl);
     if (infos[stage]) {
         shader_stages.emplace_back(vk::PipelineShaderStageCreateInfo{
@@ -194,7 +209,7 @@ GraphicsPipeline::GraphicsPipeline(
         const auto type = is_quad_list ? AuxShaderType::QuadListTCS : AuxShaderType::RectListTCS;
         if (!preloading) {
             const auto& fs_info = runtime_infos[u32(Shader::LogicalStage::Fragment)].fs_info;
-            sdata.tcs = Shader::Backend::SPIRV::EmitAuxilaryTessShader(type, fs_info);
+            sdata.tcs = Shader::Backend::SPIRV::EmitAuxilaryTessShader(type, fs_info, vs_output_mask);
         }
         shader_stages.emplace_back(vk::PipelineShaderStageCreateInfo{
             .stage = vk::ShaderStageFlagBits::eTessellationControl,
@@ -213,7 +228,7 @@ GraphicsPipeline::GraphicsPipeline(
         if (!preloading) {
             const auto& fs_info = runtime_infos[u32(Shader::LogicalStage::Fragment)].fs_info;
             sdata.tes = Shader::Backend::SPIRV::EmitAuxilaryTessShader(
-                AuxShaderType::PassthroughTES, fs_info);
+                AuxShaderType::PassthroughTES, fs_info, vs_output_mask);
         }
         shader_stages.emplace_back(vk::PipelineShaderStageCreateInfo{
             .stage = vk::ShaderStageFlagBits::eTessellationEvaluation,
