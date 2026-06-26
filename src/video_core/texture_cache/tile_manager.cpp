@@ -236,8 +236,39 @@ TileManager::Result TileManager::DetileImage(vk::Buffer in_buffer, u32 in_offset
     }};
     cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pl_layout, 0, set_writes);
 
+    // The linear/tiled input buffer was just filled by a transfer (e.g. vkCmdCopyImageToBuffer in
+    // StorageImageSync). Without this barrier the (de)tiling compute can read it before that write
+    // lands, and the caller's subsequent transfer copy can overwrite the input before the compute
+    // finishes reading — a WRITE-AFTER-WRITE / read-before-write hazard that corrupts the output
+    // (observed as garbage skinned/head geometry written back to guest).
+    {
+        const vk::MemoryBarrier2 pre_barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .dstAccessMask =
+                vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
+        };
+        cmdbuf.pipelineBarrier2(
+            vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &pre_barrier});
+    }
+
     const auto dim_x = (info.guest_size / (info.num_bits / 8)) / 64;
     cmdbuf.dispatch(dim_x, 1, 1);
+
+    // Make the compute output (and the WAR on the input) visible to the caller's transfer copy.
+    {
+        const vk::MemoryBarrier2 post_barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .srcAccessMask =
+                vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask =
+                vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite,
+        };
+        cmdbuf.pipelineBarrier2(
+            vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &post_barrier});
+    }
     return {out_buffer, 0};
 }
 
@@ -316,8 +347,39 @@ TileManager::Result TileManager::TileLinearBuffer(vk::Buffer in_buffer, u32 in_o
     }};
     cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pl_layout, 0, set_writes);
 
+    // The linear/tiled input buffer was just filled by a transfer (e.g. vkCmdCopyImageToBuffer in
+    // StorageImageSync). Without this barrier the (de)tiling compute can read it before that write
+    // lands, and the caller's subsequent transfer copy can overwrite the input before the compute
+    // finishes reading — a WRITE-AFTER-WRITE / read-before-write hazard that corrupts the output
+    // (observed as garbage skinned/head geometry written back to guest).
+    {
+        const vk::MemoryBarrier2 pre_barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .dstAccessMask =
+                vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
+        };
+        cmdbuf.pipelineBarrier2(
+            vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &pre_barrier});
+    }
+
     const auto dim_x = (info.guest_size / (info.num_bits / 8)) / 64;
     cmdbuf.dispatch(dim_x, 1, 1);
+
+    // Make the compute output (and the WAR on the input) visible to the caller's transfer copy.
+    {
+        const vk::MemoryBarrier2 post_barrier{
+            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .srcAccessMask =
+                vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask =
+                vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite,
+        };
+        cmdbuf.pipelineBarrier2(
+            vk::DependencyInfo{.memoryBarrierCount = 1, .pMemoryBarriers = &post_barrier});
+    }
     return {out_buffer, 0};
 }
 
