@@ -270,31 +270,9 @@ int main(int argc, char* argv[]) {
         {"--show-fps", [&](int& i) { Config::setShowFpsCounter(true); }}};
 
     if (argc == 1) {
-        const char* repo_url = "https://github.com/diegolix29/shadPS4/releases";
-
-        const SDL_MessageBoxButtonData buttons[] = {
-            {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "OK"}, {0, 1, "Open Repo"}};
-
-        const SDL_MessageBoxData messageboxdata = {
-            SDL_MESSAGEBOX_INFORMATION,
-            nullptr,
-            "shadPS4",
-            "This is a CLI application.\n\n"
-            "Use QTLauncher or Shadlix version to use it.\n\n"
-            "Or use the QT Shadlix for a GUI.",
-            SDL_arraysize(buttons),
-            buttons,
-            nullptr};
-
-        int buttonid = -1;
-        if (SDL_ShowMessageBox(&messageboxdata, &buttonid) < 0) {
-            std::cerr << "Could not display SDL message box! Error: " << SDL_GetError() << "\n";
-        }
-
-        if (buttonid == 1) {
-            OpenURL(repo_url);
-        }
-
+        // No game specified: print usage and exit (standard CLI behavior). Run with an eboot/ELF
+        // path, or use a launcher shortcut/script that supplies the path, to play directly without
+        // the Qt launcher.
         int dummy = 0;
         arg_map.at("-h")(dummy);
         return -1;
