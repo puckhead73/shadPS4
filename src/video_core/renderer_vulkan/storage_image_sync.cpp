@@ -24,11 +24,25 @@ void StorageImageSync::Sync(VideoCore::ImageId image_id) {
 
     const u32 bpp = img.info.num_bits / 8u;
     const u32 row_length = img.info.pitch ? img.info.pitch : img.info.size.width;
+    // Linear size produced by vkCmdCopyImageToBuffer.
     const u32 download_size = row_length * img.info.size.height * img.info.resources.layers * bpp;
+    // A tiled image's guest layout is guest_size, which includes tile alignment padding and is
+    // often LARGER than the linear download_size. The retile (TileLinearBuffer) produces exactly
+    // guest_size bytes, so the copy-back and the guest writeback must use guest_size — using the
+    // smaller download_size truncates the tiled position/skinning map, leaving its tail stale/zero
+    // (verts collapse to the anchor = "spikes from a point").
+    const bool is_tiled = img.info.props.is_tiled;
+    const u32 guest_size = img.info.guest_size;
+    const u32 writeback_size = is_tiled ? guest_size : download_size;
+    // Staging region must hold both the linear download (download_size at offset) and, later, the
+    // tiled output written back into it (writeback_size at the same offset).
+    const u32 map_size = std::max(download_size, writeback_size);
 
-    LOG_DEBUG(Render_Vulkan, "[StorageSync] guest={:#x} {}x{} layers={} bpp={} row_len={} size={}",
+    LOG_DEBUG(Render_Vulkan,
+              "[StorageSync] guest={:#x} {}x{} layers={} bpp={} row_len={} dl_size={} "
+              "guest_size={} tiled={}",
               guest_addr, img.info.size.width, img.info.size.height, img.info.resources.layers, bpp,
-              row_length, download_size);
+              row_length, download_size, guest_size, is_tiled);
 
     // Transit to transfer-src for the copy.
     img.Transit(vk::ImageLayout::eTransferSrcOptimal, vk::AccessFlagBits2::eTransferRead, {});
@@ -38,12 +52,12 @@ void StorageImageSync::Sync(VideoCore::ImageId image_id) {
 
     // Map staging buffer and record copy.
     auto& download_buf = buffer_cache.GetUtilityBuffer(VideoCore::MemoryUsage::Download);
-    const auto [data, offset] = download_buf.Map(download_size);
+    const auto [data, offset] = download_buf.Map(map_size);
     if (!data) {
         LOG_ERROR(Render_Vulkan,
                   "[StorageSync] StreamBuffer Map failed for {}B — download SKIPPED, "
                   "texture corruption likely",
-                  download_size);
+                  map_size);
         // img was already transitioned to TransferSrcOptimal above; restore it to a
         // sane layout so later passes don't trip a validation error or stall on a
         // mismatched layout.
@@ -80,11 +94,12 @@ void StorageImageSync::Sync(VideoCore::ImageId image_id) {
     auto [tiled_buffer, tiled_offset] =
         tile_manager.TileLinearBuffer(download_buf.Handle(), offset, img.info);
     if (tiled_buffer != download_buf.Handle()) {
-        // Tiler wrote to a scratch buffer; copy back to download buffer.
+        // Tiler wrote to a scratch buffer sized at guest_size; copy the FULL tiled output back to
+        // the download buffer (not the smaller linear download_size, which would truncate it).
         const vk::BufferCopy tile_copy = {
             .srcOffset = tiled_offset,
             .dstOffset = offset,
-            .size = download_size,
+            .size = writeback_size,
         };
         scheduler.CommandBuffer().copyBuffer(tiled_buffer, download_buf.Handle(), tile_copy);
     }
@@ -97,9 +112,9 @@ void StorageImageSync::Sync(VideoCore::ImageId image_id) {
     // Mark consumers dirty before writing to guest (hash check needs old hash).
     texture_cache.InvalidateMemory(guest_addr, img.info.guest_size,
                                    /*exclude_image_id=*/image_id);
-    Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(guest_addr), data, download_size);
+    Core::Memory::Instance()->TryWriteBacking(std::bit_cast<u8*>(guest_addr), data, writeback_size);
     // Notify buffer cache that guest memory has new data so SynchronizeBuffer picks it up.
-    buffer_cache.MarkRegionAsCpuModified(guest_addr, download_size);
+    buffer_cache.MarkRegionAsCpuModified(guest_addr, writeback_size);
 }
 
 } // namespace Vulkan
