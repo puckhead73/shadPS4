@@ -133,11 +133,15 @@ public:
     /// Flushes GPU modified ranges of the uncovered part of the edge pages of an image.
     void ReadEdgeImagePages(const Image& image);
 
-    /// Binds host vertex buffers for the current draw.
-    void BindVertexBuffers(const Vulkan::GraphicsPipeline& pipeline);
+    /// Binds host vertex buffers for the current draw. Appends a compute->vertex-input barrier for
+    /// any bound range that was GPU-modified (e.g. written by a prior compute dispatch).
+    void BindVertexBuffers(const Vulkan::GraphicsPipeline& pipeline,
+                           boost::container::small_vector<vk::BufferMemoryBarrier2, 16>& barriers);
 
-    /// Bind host index buffer for the current draw.
-    void BindIndexBuffer(u32 index_offset);
+    /// Bind host index buffer for the current draw. Appends a compute->index-input barrier when the
+    /// index range was GPU-modified.
+    void BindIndexBuffer(u32 index_offset,
+                         boost::container::small_vector<vk::BufferMemoryBarrier2, 16>& barriers);
 
     /// Writes a value to GPU buffer. (uses command buffer to temporarily store the data)
     void FillBuffer(VAddr address, u32 num_bytes, u32 value, bool is_gds);
