@@ -2,8 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>        // [CsGather]/[B2Watch] TEMP PROBE — REMOVE before commit
+#include <unordered_map> // [CsGather] TEMP PROBE — REMOVE before commit
+#include <vector>        // [CsGather] TEMP PROBE — REMOVE before commit
 #include "common/config.h"
 #include "common/debug.h"
+#include "common/logging/log.h" // [CsGather] TEMP PROBE — REMOVE before commit
 #include "core/memory.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -18,6 +22,10 @@
 #ifdef MemoryBarrier
 #undef MemoryBarrier
 #endif
+
+// [B2Watch] TEMP PROBE — globals defined in page_manager.cpp. REMOVE before commit.
+extern std::atomic<u64> g_b2_watch_lo;
+extern std::atomic<u64> g_b2_watch_hi;
 
 namespace Vulkan {
 
@@ -645,6 +653,92 @@ bool Rasterizer::IsComputeImageClear(const Pipeline* pipeline) {
 
 void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
                              Shader::PushData& push_data) {
+    // ===== [CsGather] TEMP PROBE (NHL19 mouth) — REMOVE before commit =====
+    // For head-assembly compute dispatches (gather: >=5 bound buffers), log every bound
+    // buffer's guest base/size, whether it's GPU- vs CPU-modified, and a degeneracy metric
+    // (zeros / nonconst dwords, plus a tail-only zero count). Goal: find the per-vertex gather
+    // INDEX buffer and learn if its (mouth) tail is degenerate AND whether it's GPU-produced
+    // (sync fix possible) or CPU-written (asset/threading delivery gap).
+    if (stage.stage == Shader::Stage::Compute && stage.buffers.size() >= 5) {
+        static std::unordered_map<u64, u32> cs_gather_budget;
+        u32& seen = cs_gather_budget[stage.pgm_hash];
+        if (seen < 12) {
+            ++seen;
+            LOG_WARNING(Render_Vulkan, "[CsGather] hash={:#x} nbuf={}", stage.pgm_hash,
+                        stage.buffers.size());
+            u32 bidx = 0;
+            for (const auto& d : stage.buffers) {
+                const auto vs = d.GetSharp(stage);
+                const VAddr base = vs.base_address;
+                const u64 size = vs.GetSize();
+                if (d.IsSpecial() || base == 0 || size == 0) {
+                    LOG_WARNING(Render_Vulkan, "[CsGather]  b{} <special/unbound>", bidx++);
+                    continue;
+                }
+                const bool gpumod = buffer_cache.IsRegionGpuModified(base, size);
+                const bool cpumod = buffer_cache.IsRegionCpuModified(base, size);
+                const u64 n = std::min<u64>(size / 4, 4096);
+                std::vector<u32> dw(n);
+                memory->CopySparseMemory(base, reinterpret_cast<u8*>(dw.data()), n * 4);
+                u32 zeros = 0, nonconst = 0, tail_zeros = 0;
+                const u32 first = n ? dw[0] : 0;
+                const u64 tail_start = n - n / 4;
+                for (u64 i = 0; i < n; ++i) {
+                    if (dw[i] == 0) {
+                        ++zeros;
+                        if (i >= tail_start) {
+                            ++tail_zeros;
+                        }
+                    }
+                    if (dw[i] != first) {
+                        ++nonconst;
+                    }
+                }
+                LOG_WARNING(Render_Vulkan,
+                            "[CsGather]  b{} base={:#x} size={} wr={} gpumod={} cpumod={} "
+                            "zeros={}/{} nonconst={} tailzeros={}/{} dw0={:#x}",
+                            bidx, base, size, d.is_written, gpumod, cpumod, zeros, n, nonconst,
+                            tail_zeros, n - tail_start, first);
+                // Large CPU-side INPUT pools (e.g. b2): full-scan to find the populated byte
+                // range. Partial population (data then zero tail) = truncation (maybe
+                // renderer-fixable); fully zero = source never delivered (CPU gap).
+                if (!d.is_written && size >= 50000) {
+                    const u64 fn = std::min<u64>(size / 4, 65536);
+                    std::vector<u32> fdw(fn);
+                    memory->CopySparseMemory(base, reinterpret_cast<u8*>(fdw.data()), fn * 4);
+                    s64 first_nz = -1, last_nz = -1;
+                    u64 nz = 0;
+                    for (u64 i = 0; i < fn; ++i) {
+                        if (fdw[i] != 0) {
+                            if (first_nz < 0) {
+                                first_nz = static_cast<s64>(i);
+                            }
+                            last_nz = static_cast<s64>(i);
+                            ++nz;
+                        }
+                    }
+                    LOG_WARNING(Render_Vulkan,
+                                "[CsGather]   b{} FULLSCAN scanned={}dw nz={} first_nz_byte={} "
+                                "last_nz_byte={}",
+                                bidx, fn, nz, first_nz < 0 ? -1 : first_nz * 4,
+                                last_nz < 0 ? -1 : last_nz * 4);
+                    // [B2Watch] arm the CPU-write tracer on the first all-zero source pool.
+                    if (nz == 0 && ::g_b2_watch_hi.load(std::memory_order_relaxed) == 0) {
+                        const u64 wlo = base & ~u64(0xFFF);
+                        const u64 whi = (base + size + 0xFFF) & ~u64(0xFFF);
+                        g_b2_watch_lo.store(wlo, std::memory_order_relaxed);
+                        g_b2_watch_hi.store(whi, std::memory_order_relaxed);
+                        LOG_WARNING(Render_Vulkan,
+                                    "[B2Watch] armed lo={:#x} hi={:#x} from b2={:#x} size={}", wlo,
+                                    whi, base, size);
+                    }
+                }
+                ++bidx;
+            }
+        }
+    }
+    // ===== end [CsGather] TEMP PROBE =====
+
     buffer_bindings.clear();
 
     for (const auto& desc : stage.buffers) {
