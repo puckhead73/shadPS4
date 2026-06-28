@@ -18,6 +18,7 @@
 #endif
 #include "common/config.h"
 #include "common/memory_patcher.h"
+#include "common/perf_stats.h"
 #include "common/singleton.h"
 #include "common/types.h"
 #include "core/debug_state.h"
@@ -460,6 +461,14 @@ void L::DrawSimple() {
     Text("%d FPS (%.1f ms)", static_cast<int>(std::round(frameRate)), ms);
 
     PopStyleColor();
+
+    // Per-frame GPU-stall budget breakdown (always-on, rolling averages).
+    const auto perf = Common::PerfStats::Instance().Last();
+    Text("Draws/f: %.0f  Disp/f: %.0f", perf.draws, perf.dispatches);
+    Text("Finish/f: %.1f  Submit/f: %.1f", perf.gpu_finishes, perf.gpu_submits);
+    Text("GPU wait: %.1f ms/f", perf.gpu_wait_ms);
+    Text("Readback: %.1f MB/f", perf.readback_mb);
+    Text("Pipeline: %.2f (%.2f ms)", perf.pipeline_compiles, perf.pipeline_compile_ms);
 }
 
 static void LoadSettings(const char* line) {

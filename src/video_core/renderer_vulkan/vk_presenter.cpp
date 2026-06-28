@@ -6,6 +6,7 @@
 #include "common/elf_info.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
+#include "common/perf_stats.h"
 #include "common/singleton.h"
 #include "core/debug_state.h"
 #include "core/devtools/layer.h"
@@ -1109,6 +1110,8 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame) {
     free_frame();
     if (!is_reusing_frame) {
         DebugState.IncFlipFrameNum();
+        // Snapshot per-frame performance counters for the devtools overlay.
+        Common::PerfStats::Instance().NextFrame();
     }
 }
 

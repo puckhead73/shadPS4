@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
 #include <limits>
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_master_semaphore.h"
 
 #include "common/assert.h"
+#include "common/perf_stats.h"
 
 namespace Vulkan {
 
@@ -62,8 +64,14 @@ void MasterSemaphore::Wait(u64 tick) {
         .pValues = &tick,
     };
 
+    // This is a genuine CPU stall on the GPU timeline — measure it so the overlay
+    // can attribute frame time to GPU-sync waits vs actual GPU/CPU work.
+    const auto wait_start = std::chrono::steady_clock::now();
     while (instance.GetDevice().waitSemaphores(&wait_info, WAIT_TIMEOUT) != vk::Result::eSuccess) {
     }
+    const std::chrono::duration<float, std::milli> wait_ms =
+        std::chrono::steady_clock::now() - wait_start;
+    Common::PerfStats::Instance().AddGpuWaitTime(wait_ms.count());
     Refresh();
 }
 

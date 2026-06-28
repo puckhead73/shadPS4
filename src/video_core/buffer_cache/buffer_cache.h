@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <boost/container/small_vector.hpp>
 #include <queue>
 #include <tsl/robin_map.h>
@@ -168,6 +169,18 @@ public:
     /// without going through the buffer cache's own ObtainBuffer/WriteDataBuffer.
     void MarkRegionAsCpuModified(VAddr addr, size_t size);
 
+    /// Returns (and clears) whether any CPU-side modification of a registered buffer
+    /// happened since the last call. Lets the DMA path skip the expensive
+    /// all-mapped-ranges rescan on draws when nothing changed since the last sync.
+    [[nodiscard]] bool ConsumeDmaSyncDirty() {
+        return dma_sync_dirty_.exchange(false, std::memory_order_acq_rel);
+    }
+
+    /// Force the next DMA draw to re-sync (e.g. after a new guest mapping).
+    void MarkDmaSyncDirty() {
+        dma_sync_dirty_.store(true, std::memory_order_release);
+    }
+
     /// Return true when a CPU region is modified from the GPU
     [[nodiscard]] bool IsRegionGpuModified(VAddr addr, size_t size);
 
@@ -258,6 +271,10 @@ private:
     TextureCache& texture_cache;
     FaultManager fault_manager;
     std::unique_ptr<MemoryTracker> memory_tracker;
+    // Set whenever a registered buffer becomes CPU-modified; consumed by the DMA
+    // sync path to avoid rescanning all mapped ranges every draw. Starts true so the
+    // first DMA draw always syncs.
+    std::atomic<bool> dma_sync_dirty_{true};
     StreamBuffer staging_buffer;
     StreamBuffer stream_buffer;
     StreamBuffer download_buffer;

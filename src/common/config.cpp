@@ -277,7 +277,7 @@ static ConfigEntry<bool> vkCrashDiagnostic(false);
 static ConfigEntry<bool> vkHostMarkers(false);
 static ConfigEntry<bool> vkGuestMarkers(false);
 static ConfigEntry<bool> rdocEnable(false);
-static ConfigEntry<bool> pipelineCacheEnable(false);
+static ConfigEntry<bool> pipelineCacheEnable(true);
 static ConfigEntry<bool> pipelineCacheArchive(true);
 // CPU
 static ConfigEntry<Common::CpuCoreMode> cpuCoreMode(Common::CpuCoreMode::All);

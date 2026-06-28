@@ -21,7 +21,9 @@ static inline bool IsProfilerConnected() {
 #endif
 }
 
+#ifndef TRACY_GPU_ENABLED
 #define TRACY_GPU_ENABLED 0
+#endif
 
 #define CUSTOM_LOCK(type, varname)                                                                 \
     tracy::LockableCtx varname {                                                                   \

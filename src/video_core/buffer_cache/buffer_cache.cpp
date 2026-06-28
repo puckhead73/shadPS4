@@ -5,6 +5,7 @@
 #include "common/alignment.h"
 #include "common/debug.h"
 #include "common/memory_patcher.h"
+#include "common/perf_stats.h"
 #include "common/scope_exit.h"
 #include "core/memory.h"
 
@@ -82,6 +83,8 @@ void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool download) {
     if (!IsRegionRegistered(device_addr, size)) {
         return;
     }
+    // A registered buffer's CPU data is changing — the DMA path must re-sync.
+    dma_sync_dirty_.store(true, std::memory_order_release);
     if (Config::readbackSpeed() != Config::ReadbackSpeed::Disable) {
         memory_tracker->InvalidateRegion(
             device_addr, size, [this, device_addr, size] { ReadMemory(device_addr, size, true); });
@@ -137,6 +140,7 @@ void BufferCache::DownloadBufferMemory(Buffer& buffer, VAddr device_addr, u64 si
         scheduler.EndRendering();
         const auto cmdbuf = scheduler.CommandBuffer();
         cmdbuf.copyBuffer(buffer.buffer, download_buffer.Handle(), copies);
+        Common::PerfStats::Instance().AddReadbackBytes(total_size_bytes);
         const auto write_data = [&]() {
             for (const auto& copy : copies) {
                 const VAddr copy_device_addr = buffer.CpuAddr() + copy.srcOffset;
@@ -209,6 +213,7 @@ void BufferCache::ReadEdgeImagePages(const Image& image) {
     scheduler.EndRendering();
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.copyBuffer(buffer->Handle(), download_buffer.Handle(), copies);
+    Common::PerfStats::Instance().AddReadbackBytes(total_size_bytes);
     scheduler.DeferOperation([this, buf_addr = buffer->CpuAddr(), copies = std::move(copies),
                               download, download_offset, image_addr, image_size]() {
         auto* memory = Core::Memory::Instance();
@@ -224,6 +229,7 @@ void BufferCache::ReadEdgeImagePages(const Image& image) {
 void BufferCache::BindVertexBuffers(
     const Vulkan::GraphicsPipeline& pipeline,
     boost::container::small_vector<vk::BufferMemoryBarrier2, 16>& barriers) {
+    RENDERER_TRACE;
     const auto& regs = liverpool->regs;
     Vulkan::VertexInputs<vk::VertexInputAttributeDescription2EXT> attributes;
     Vulkan::VertexInputs<vk::VertexInputBindingDescription2EXT> bindings;
@@ -569,6 +575,7 @@ void BufferCache::MarkRegionAsGpuModified(VAddr addr, size_t size) {
 
 void BufferCache::MarkRegionAsCpuModified(VAddr addr, size_t size) {
     memory_tracker->MarkRegionAsCpuModified(addr, size);
+    dma_sync_dirty_.store(true, std::memory_order_release);
 }
 
 BufferId BufferCache::FindBuffer(VAddr device_addr, u32 size) {

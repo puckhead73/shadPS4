@@ -40,6 +40,14 @@ option(ENABLE_QT_GUI "Enable the Qt GUI. If not selected then the emulator uses 
 option(ENABLE_DISCORD_RPC "Enable the Discord RPC integration" ON)
 option(ENABLE_UPDATER "Enables the options to updater" ON)
 option(ENABLE_TESTS "Build unit tests (requires GTest)" OFF)
+option(ENABLE_PROFILING "Enables Tracy CPU+GPU profiling instrumentation (forces TRACY_ENABLE and TRACY_GPU_ENABLED)" OFF)
+
+if (ENABLE_PROFILING)
+    # Force the Tracy client on even for Release-style builds and turn on the
+    # GPU-side instrumentation that debug.h leaves disabled by default.
+    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+    add_compile_definitions(TRACY_GPU_ENABLED=1)
+endif()
 
 # First, determine whether to use CMAKE_OSX_ARCHITECTURES or CMAKE_SYSTEM_PROCESSOR.
 if (APPLE AND CMAKE_OSX_ARCHITECTURES)
@@ -787,6 +795,8 @@ set(COMMON src/common/logging/backend.cpp
            src/common/native_clock.h
            src/common/path_util.cpp
            src/common/path_util.h
+           src/common/perf_stats.cpp
+           src/common/perf_stats.h
            src/common/object_pool.h
            src/common/polyfill_thread.h
            src/common/range_lock.h

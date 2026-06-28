@@ -4,6 +4,7 @@
 #include <algorithm>
 #include "common/config.h"
 #include "common/debug.h"
+#include "common/perf_stats.h"
 #include "core/memory.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -117,6 +118,7 @@ bool Rasterizer::FilterDraw() {
 }
 
 void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
+    RENDERER_TRACE;
     // Prefetch render targets to handle overlaps with bound textures (e.g. mipgen)
     const auto& key = pipeline->GetGraphicsKey();
     const auto& regs = liverpool->regs;
@@ -239,6 +241,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
         cmdbuf.draw(regs.num_indices, regs.num_instances.NumInstances(), vertex_offset,
                     instance_offset);
     }
+    Common::PerfStats::Instance().AddDraw();
 
     ResetBindings();
 }
@@ -329,6 +332,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
             cmdbuf.drawIndirect(buffer->Handle(), base, max_count, stride);
         }
     }
+    Common::PerfStats::Instance().AddDraw();
 
     ResetBindings();
 }
@@ -359,6 +363,7 @@ void Rasterizer::DispatchDirect() {
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->Handle());
     cmdbuf.dispatch(cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
+    Common::PerfStats::Instance().AddDispatch();
 
     if (Config::getSyncStorageImages()) {
         for (const auto storage_image_id : pending_storage_image_ids_) {
@@ -397,6 +402,7 @@ void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size, bool on_g
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline->Handle());
     cmdbuf.dispatchIndirect(buffer->Handle(), base);
+    Common::PerfStats::Instance().AddDispatch();
 
     if (Config::getSyncStorageImages()) {
         for (const auto storage_image_id : pending_storage_image_ids_) {
@@ -442,6 +448,7 @@ void Rasterizer::CommitPendingGpuRanges() {
 }
 
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
+    RENDERER_TRACE;
     if (IsComputeImageCopy(pipeline) || IsComputeMetaClear(pipeline) ||
         IsComputeImageClear(pipeline)) {
         return false;
@@ -474,9 +481,15 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
 
     if (uses_dma) {
         // We only use fault buffer for DMA right now.
-        Common::RecursiveSharedLock lock{mapped_ranges_mutex};
-        for (auto& range : mapped_ranges) {
-            buffer_cache.SynchronizeBuffersInRange(range.lower(), range.upper() - range.lower());
+        // Only rescan all mapped ranges when something became CPU-modified since the
+        // last sync; otherwise the GPU-side buffers are already current. This collapses
+        // the per-draw all-ranges rescan (millions of calls/frame) to ~one per change.
+        if (buffer_cache.ConsumeDmaSyncDirty()) {
+            Common::RecursiveSharedLock lock{mapped_ranges_mutex};
+            for (auto& range : mapped_ranges) {
+                buffer_cache.SynchronizeBuffersInRange(range.lower(),
+                                                       range.upper() - range.lower());
+            }
         }
         fault_process_pending = true;
     }
@@ -900,6 +913,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
 }
 
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
+    RENDERER_TRACE;
     attachment_feedback_loop = false;
     const auto& regs = liverpool->regs;
     const auto& key = pipeline->GetGraphicsKey();
@@ -1167,6 +1181,8 @@ void Rasterizer::MapMemory(VAddr addr, u64 size) {
         std::scoped_lock lock{mapped_ranges_mutex};
         mapped_ranges += decltype(mapped_ranges)::interval_type::right_open(addr, addr + size);
     }
+    // A newly mapped range may already hold guest data the DMA path must sync.
+    buffer_cache.MarkDmaSyncDirty();
     page_manager.OnGpuMap(addr, size);
 }
 
@@ -1181,6 +1197,7 @@ void Rasterizer::UnmapMemory(VAddr addr, u64 size) {
 }
 
 void Rasterizer::UpdateDynamicState(const GraphicsPipeline* pipeline, const bool is_indexed) const {
+    RENDERER_TRACE;
     UpdateViewportScissorState();
     UpdateDepthStencilState();
     UpdatePrimitiveState(is_indexed);

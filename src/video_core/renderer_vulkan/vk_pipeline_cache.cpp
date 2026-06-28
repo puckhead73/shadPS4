@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
 #include <ranges>
 
 #include "common/config.h"
+#include "common/debug.h"
 #include "common/hash.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
+#include "common/perf_stats.h"
 #include "core/debug_state.h"
 #include "shader_recompiler/backend/spirv/emit_spirv.h"
 #include "shader_recompiler/info.h"
@@ -322,6 +325,7 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
 PipelineCache::~PipelineCache() = default;
 
 const GraphicsPipeline* PipelineCache::GetGraphicsPipeline() {
+    RENDERER_TRACE;
     if (!RefreshGraphicsKey()) {
         return nullptr;
     }
@@ -331,9 +335,13 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline() {
         LOG_INFO(Render_Vulkan, "Compiling graphics pipeline {:#x}", pipeline_hash);
 
         GraphicsPipeline::SerializationSupport sdata{};
+        const auto compile_start = std::chrono::steady_clock::now();
         it.value() = std::make_unique<GraphicsPipeline>(
             instance, scheduler, desc_heap, profile, graphics_key, *pipeline_cache, infos,
             runtime_infos, fetch_shader, modules, sdata, false);
+        const std::chrono::duration<float, std::milli> compile_ms =
+            std::chrono::steady_clock::now() - compile_start;
+        Common::PerfStats::Instance().AddPipelineCompile(compile_ms.count());
 
         RegisterPipelineData(graphics_key, pipeline_hash, sdata);
         ++num_new_pipelines;
@@ -352,6 +360,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline() {
 }
 
 const ComputePipeline* PipelineCache::GetComputePipeline() {
+    RENDERER_TRACE;
     if (!RefreshComputeKey()) {
         return nullptr;
     }
@@ -361,9 +370,14 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         LOG_INFO(Render_Vulkan, "Compiling compute pipeline {:#x}", pipeline_hash);
 
         ComputePipeline::SerializationSupport sdata{};
+        const auto compile_start = std::chrono::steady_clock::now();
         it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
                                                        *pipeline_cache, compute_key, *infos[0],
                                                        modules[0], sdata, false);
+        const std::chrono::duration<float, std::milli> compile_ms =
+            std::chrono::steady_clock::now() - compile_start;
+        Common::PerfStats::Instance().AddPipelineCompile(compile_ms.count());
+
         RegisterPipelineData(compute_key, sdata);
         ++num_new_pipelines;
 
@@ -399,6 +413,10 @@ bool PipelineCache::RefreshGraphicsKey() {
     key.depth_samples = db_enabled ? regs.depth_buffer.NumSamples() : 1;
     key.num_samples = key.depth_samples;
     key.cb_shader_mask = regs.color_shader_mask;
+    // Alpha-to-coverage: gated by the DB_ALPHA_TO_MASK master enable, and may be
+    // suppressed per-shader via DB_SHADER_CONTROL.ALPHA_TO_MASK_DISABLE.
+    key.alpha_to_coverage =
+        regs.db_alpha_to_mask.enable && !regs.depth_shader_control.alpha_to_mask_disable;
 
     const bool skip_cb_binding =
         regs.color_control.mode == AmdGpu::ColorControl::OperationMode::Disable;
