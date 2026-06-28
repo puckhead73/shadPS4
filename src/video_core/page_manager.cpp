@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <atomic>                // [B2Watch] TEMP PROBE — REMOVE before commit
 #include <boost/container/small_vector.hpp>
 #include "common/assert.h"
 #include "common/config.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
-#include "common/logging/log.h" // [B2Watch] TEMP PROBE — REMOVE before commit
 #include "common/memory_patcher.h"
 #include "common/range_lock.h"
 #include "common/signal_context.h"
@@ -37,15 +35,6 @@
 #else
 #include "common/spin_lock.h"
 #endif
-
-// ===== [B2Watch] TEMP PROBE (NHL19 mouth, CPU-side write tracer) — REMOVE before commit =====
-// Armed by the [CsGather] FULLSCAN in vk_rasterizer.cpp when it finds the all-zero CPU-side
-// source pool (b2). The guest-write fault handler then logs the guest RIP + thread of every
-// write landing in that page range, revealing who fills (or zeroes) the head/mouth pool.
-std::atomic<u64> g_b2_watch_lo{0};
-std::atomic<u64> g_b2_watch_hi{0};
-std::atomic<u32> g_b2_watch_count{0};
-// ===== end [B2Watch] =====
 
 namespace VideoCore {
 
@@ -207,14 +196,6 @@ struct PageManager::Impl {
     static bool GuestFaultSignalHandler(void* context, void* fault_address) {
         const auto addr = reinterpret_cast<VAddr>(fault_address);
         if (Common::IsWriteError(context)) {
-            // [B2Watch] TEMP — log guest RIP of writers into the armed head-pool window.
-            const u64 wlo = g_b2_watch_lo.load(std::memory_order_relaxed);
-            const u64 whi = g_b2_watch_hi.load(std::memory_order_relaxed);
-            if (wlo && addr >= wlo && addr < whi &&
-                g_b2_watch_count.fetch_add(1, std::memory_order_relaxed) < 96) {
-                LOG_WARNING(Render_Vulkan, "[B2Watch] WRITE addr={:#x} rip={} tid={}", addr,
-                            Common::GetRip(context), ::GetCurrentThreadId());
-            }
             return rasterizer->InvalidateMemory(addr, 8);
         } else {
             return rasterizer->ReadMemory(addr, 8);
