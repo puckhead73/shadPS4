@@ -336,7 +336,12 @@ T Translator::GetSrc(const InstOperand& operand) {
                 value = bits;
             }
         } else {
-            UNREACHABLE();
+            // The type-tracker couldn't classify this SGPR (e.g. it was produced in another
+            // control-flow path or by an untracked instruction). Fall back to reading it as a
+            // plain scalar register instead of aborting translation of the whole shader.
+            LOG_WARNING(Render_Recompiler, "Reading undefined-typed SGPR {} as scalar",
+                        operand.code);
+            value = ir.GetScalarReg<T>(IR::ScalarReg(operand.code));
         }
         break;
     case OperandField::VectorGPR:
@@ -747,7 +752,12 @@ T Translator::GetSrc64(const InstOperand& operand) {
             value_lo = IR::U32{ir.CompositeExtract(value_bits, 0)};
             value_hi = IR::U32{ir.CompositeExtract(value_bits, 1)};
         } else {
-            UNREACHABLE_MSG("Undefined scalar type");
+            // Untracked/undefined SGPR pair: read both halves as plain scalar registers
+            // rather than aborting translation.
+            LOG_WARNING(Render_Recompiler, "Reading undefined-typed SGPR pair {} as scalar",
+                        operand.code);
+            value_lo = ir.GetScalarReg(IR::ScalarReg(operand.code));
+            value_hi = ir.GetScalarReg(IR::ScalarReg(operand.code + 1));
         }
         if constexpr (is_float) {
             value = ir.PackDouble2x32(ir.CompositeConstruct(value_lo, value_hi));
