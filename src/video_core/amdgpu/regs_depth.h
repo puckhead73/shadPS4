@@ -38,6 +38,17 @@ struct DepthShaderControl {
     ConservativeDepth conservative_z_export : 2;
 };
 
+// DB_ALPHA_TO_MASK (0xA2DC) - master enable + dither controls for alpha-to-coverage.
+struct AlphaToMaskControl {
+    u32 enable : 1;
+    u32 : 7;
+    u32 offset0 : 2;
+    u32 offset1 : 2;
+    u32 offset2 : 2;
+    u32 offset3 : 2;
+    u32 offset_round : 1;
+};
+
 enum class CompareFunc : u32 {
     Never = 0,
     Less = 1,
