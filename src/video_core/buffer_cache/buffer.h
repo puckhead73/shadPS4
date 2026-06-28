@@ -128,7 +128,20 @@ public:
     std::optional<vk::BufferMemoryBarrier2> GetBarrier(vk::AccessFlags2 dst_acess_mask,
                                                        vk::PipelineStageFlagBits2 dst_stage,
                                                        u32 offset = 0) {
-        if (dst_acess_mask == access_mask && stage == dst_stage) {
+        // It is only safe to skip the barrier for read-after-read with an unchanged stage. When
+        // either the previous or the new access writes the buffer (e.g. a compute dispatch writes a
+        // storage pool that the next dispatch reads or read-writes), the access masks can be
+        // identical (eShaderWrite == eShaderWrite for an RW buffer) yet a RAW/WAW hazard still
+        // exists and MUST be synchronized. Skipping it races the dispatches and reads stale/zero
+        // data (NHL19 head-gather: the RW source pool was never barriered, leaving holes in the
+        // gathered vertex buffer). Only short-circuit when no write is involved on either side.
+        static constexpr vk::AccessFlags2 write_access =
+            vk::AccessFlagBits2::eShaderWrite | vk::AccessFlagBits2::eMemoryWrite |
+            vk::AccessFlagBits2::eTransferWrite | vk::AccessFlagBits2::eColorAttachmentWrite |
+            vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+        const bool involves_write =
+            (access_mask & write_access) || (dst_acess_mask & write_access);
+        if (dst_acess_mask == access_mask && stage == dst_stage && !involves_write) {
             return {};
         }
 
